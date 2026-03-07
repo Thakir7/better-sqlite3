@@ -1,41 +1,40 @@
-# تعليمات نشر تطبيق "شتلة" (Shatla App Deployment)
+# دليل النشر المبسط (Shatla App)
 
-لقد قمت بتجهيز الملفات اللازمة لنشر التطبيق بشكل احترافي. إليك الخطوات المطلوبة:
+لقد قمنا بتبسيط عملية النشر لتكون أسهل وأكثر استقراراً باستخدام **Render.com** و **Supabase**.
 
-### 1. تجهيز الكود (GitHub)
-*   قم برفع الكود الحالي إلى مستودع (Repository) خاص بك على **GitHub**.
-*   تأكد من وجود الملفات التالية: `Dockerfile`, `.dockerignore`, `package.json`, `server.ts`.
+## 1. تجهيز قاعدة البيانات (Supabase)
+1. أنشئ حساباً مجانياً على [Supabase](https://supabase.com).
+2. أنشئ مشروعاً جديداً (Project).
+3. اذهب إلى **Project Settings** -> **Database**.
+4. انسخ رابط الاتصال **Connection String** (تأكد من اختيار نمط `URI`). سيكون بهذا الشكل:
+   `postgresql://postgres:[PASSWORD]@db.[ID].supabase.co:5432/postgres`
 
-### 2. الإعداد على منصة Railway
-1.  قم بتسجيل الدخول إلى [Railway.app](https://railway.app/).
-2.  اضغط على **New Project** ثم اختر **Deploy from GitHub repo**.
-3.  اختر المستودع الخاص بك.
-4.  **إعداد التخزين الدائم (Persistent Volume):**
-    *   بعد إنشاء المشروع، اذهب إلى إعدادات الخدمة (**Settings**).
-    *   ابحث عن قسم **Volumes** واضغط على **Add Volume**.
-    *   قم بتسمية الـ Volume (مثلاً: `shatla-data`).
-    *   اجعل مسار الربط (Mount Path) هو: `/data`.
-5.  **إعداد متغيرات البيئة (Variables):**
-    *   اذهب إلى تبويب **Variables** وأضف المتغيرات التالية:
-        *   `NODE_ENV`: `production`
-        *   `PORT`: `3000`
-        *   `DATABASE_PATH`: `/data/shatla.db`
-        *   `GEMINI_API_KEY`: (ضع مفتاح Gemini الخاص بك هنا)
+## 2. النشر على Render.com (الأسهل)
+1. أنشئ حساباً على [Render.com](https://render.com) واربطه بـ GitHub.
+2. اضغط على **New** -> **Web Service**.
+3. اختر مستودع المشروع (Shatla App).
+4. الإعدادات التلقائية:
+   - **Runtime**: `Node`
+   - **Build Command**: `npm run build`
+   - **Start Command**: `npm start`
+5. اذهب إلى قسم **Environment Variables** وأضف المتغيرات التالية:
+   - `DATABASE_URL`: (رابط Supabase الذي نسخته في الخطوة السابقة)
+   - `NODE_ENV`: `production`
+   - `GEMINI_API_KEY`: (مفتاح Gemini الخاص بك)
+6. اضغط على **Create Web Service**.
 
-### 3. ربط الدومين من Hostinger
-1.  اذهب إلى لوحة تحكم **Hostinger** ثم إلى قسم **Domains**.
-2.  اختر الدومين الخاص بك واذهب إلى إعدادات **DNS / Nameservers**.
-3.  في Railway، اذهب إلى إعدادات الخدمة (**Settings**) ثم قسم **Domains**.
-4.  اضغط على **Custom Domain** وأدخل الدومين الخاص بك (مثلاً: `shatla.sa`).
-5.  ستعطيك Railway قيمة من نوع **CNAME**.
-6.  في Hostinger، أضف سجل جديد:
-    *   **Type:** `CNAME`
-    *   **Name:** `@` (أو اتركه فارغاً للدومين الرئيسي)
-    *   **Target:** (الصق القيمة التي حصلت عليها من Railway)
-    *   **TTL:** اتركه كما هو (عادة 3600).
+## 3. ربط الدومين (Hostinger)
+1. بعد اكتمال النشر على Render، سيعطيك رابطاً للموقع (مثلاً `shatla.onrender.com`).
+2. اذهب إلى لوحة تحكم **Hostinger** -> **DNS / Nameservers**.
+3. أضف سجل من نوع **CNAME**:
+   - **Name**: `www`
+   - **Target**: (رابط Render الخاص بك)
+4. أضف سجل من نوع **A** (إذا كنت تريد توجيه الدومين الرئيسي):
+   - اتبع تعليمات Render في قسم **Custom Domains**.
 
-### ملاحظات هامة:
-*   استخدام `/data/shatla.db` مع الـ Volume يضمن بقاء بياناتك حتى عند تحديث الكود أو إعادة تشغيل السيرفر.
-*   تأكد من أن `PORT` في Railway هو `3000` ليتوافق مع إعدادات التطبيق.
+---
 
-بالتوفيق في إطلاق مشروع "شتلة"!
+### لماذا هذه الطريقة أفضل؟
+- **لا حاجة لـ Docker**: الموقع سيعمل تلقائياً بمجرد قراءة ملف `package.json`.
+- **قاعدة بيانات سحابية**: بياناتك مخزنة بأمان على Supabase ولا تضيع عند تحديث الموقع.
+- **مجانية**: كلا المنصتين توفران خطة مجانية ممتازة للبداية.
