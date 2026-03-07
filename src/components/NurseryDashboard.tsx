@@ -8,14 +8,19 @@ interface NurseryDashboardProps {
 
 export default function NurseryDashboard({ user }: NurseryDashboardProps) {
   const [requests, setRequests] = useState<VolunteerRequest[]>([]);
+  const [seedlings, setSeedlings] = useState<Seedling[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newSeedling, setNewSeedling] = useState({ type: '', count: 0, description: '', requirements: '', image_url: '' });
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
     try {
-      const res = await fetch(`/api/requests/nursery/${user.id}`);
-      setRequests(await res.json());
+      const [reqRes, seedRes] = await Promise.all([
+        fetch(`/api/requests/nursery/${user.id}`),
+        fetch(`/api/seedlings/nursery/${user.id}`)
+      ]);
+      setRequests(await reqRes.json());
+      setSeedlings(await seedRes.json());
     } catch (e) {
       console.error(e);
     } finally {
@@ -34,6 +39,7 @@ export default function NurseryDashboard({ user }: NurseryDashboardProps) {
     });
     setShowAddModal(false);
     setNewSeedling({ type: '', count: 0, description: '', requirements: '', image_url: '' });
+    fetchData();
   };
 
   const handleRequestAction = async (id: number, status: string, reason?: string) => {
@@ -137,6 +143,46 @@ export default function NurseryDashboard({ user }: NurseryDashboardProps) {
               {requests.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-12 text-center text-stone-400">لا توجد طلبات حالياً</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-[2rem] card-shadow overflow-hidden">
+        <div className="p-6 border-b border-stone-100 flex items-center gap-2">
+          <AlertCircle className="text-primary" size={24} />
+          <h3 className="text-xl font-bold">الشتلات التي أعلنت عنها</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-right">
+            <thead className="bg-stone-50 text-stone-500 text-sm">
+              <tr>
+                <th className="p-4">النوع</th>
+                <th className="p-4">العدد المتاح</th>
+                <th className="p-4">الوصف</th>
+                <th className="p-4">الحالة</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100">
+              {seedlings.map(seed => (
+                <tr key={seed.id} className="hover:bg-stone-50 transition-colors">
+                  <td className="p-4 font-semibold">{seed.type}</td>
+                  <td className="p-4">{seed.count}</td>
+                  <td className="p-4 text-sm text-stone-500 max-w-xs truncate">{seed.description}</td>
+                  <td className="p-4">
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      seed.count > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {seed.count > 0 ? 'متاح' : 'نفذت الكمية'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {seedlings.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-12 text-center text-stone-400">لم تقم بإضافة أي شتلات بعد</td>
                 </tr>
               )}
             </tbody>
