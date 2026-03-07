@@ -4,92 +4,146 @@ import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 import fs from "fs";
+import pg from "pg";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Database
-const dbPath = process.env.DATABASE_PATH || "shatla.db";
-const dbDir = path.dirname(path.resolve(dbPath));
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+// --- Database Configuration ---
+const isPostgres = !!process.env.DATABASE_URL;
+let db: any;
+
+if (isPostgres) {
+  // PostgreSQL (Production)
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  
+  db = {
+    prepare: (sql: string) => ({
+      all: async (...params: any[]) => (await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params)).rows,
+      get: async (...params: any[]) => (await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params)).rows[0],
+      run: async (...params: any[]) => {
+        const res = await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+        return { lastInsertRowid: (res as any).rows[0]?.id };
+      }
+    }),
+    exec: async (sql: string) => {
+      // Split by semicolon but ignore inside strings
+      const queries = sql.split(';').filter(q => q.trim());
+      for (const q of queries) {
+        await pool.query(q);
+      }
+    },
+    transaction: (fn: Function) => fn() // Simple wrapper for now
+  };
+} else {
+  // SQLite (Local Development)
+  const dbPath = process.env.DATABASE_PATH || "shatla.db";
+  const dbDir = path.dirname(path.resolve(dbPath));
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  const sqlite = new Database(dbPath);
+  db = {
+    prepare: (sql: string) => {
+      const stmt = sqlite.prepare(sql);
+      return {
+        all: (...params: any[]) => stmt.all(...params),
+        get: (...params: any[]) => stmt.get(...params),
+        run: (...params: any[]) => stmt.run(...params)
+      };
+    },
+    exec: (sql: string) => sqlite.exec(sql),
+    transaction: (fn: Function) => sqlite.transaction(fn as any)()
+  };
 }
-const db = new Database(dbPath);
 
-// Create Tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT CHECK(role IN ('admin', 'nursery', 'volunteer')) NOT NULL,
-    phone TEXT,
-    location TEXT,
-    status TEXT DEFAULT 'active',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// --- Initialize Schema ---
+const initSchema = async () => {
+  const schema = `
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT CHECK(role IN ('admin', 'nursery', 'volunteer')) NOT NULL,
+      phone TEXT,
+      location TEXT,
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS seedlings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nursery_id INTEGER NOT NULL,
-    type TEXT NOT NULL,
-    count INTEGER NOT NULL,
-    description TEXT,
-    requirements TEXT,
-    image_url TEXT,
-    status TEXT DEFAULT 'available',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (nursery_id) REFERENCES users(id)
-  );
+    CREATE TABLE IF NOT EXISTS seedlings (
+      id SERIAL PRIMARY KEY,
+      nursery_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      description TEXT,
+      requirements TEXT,
+      image_url TEXT,
+      status TEXT DEFAULT 'available',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    volunteer_id INTEGER NOT NULL,
-    seedling_id INTEGER NOT NULL,
-    count INTEGER NOT NULL,
-    location TEXT,
-    status TEXT DEFAULT 'pending_nursery',
-    rejection_reason TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (volunteer_id) REFERENCES users(id),
-    FOREIGN KEY (seedling_id) REFERENCES seedlings(id)
-  );
+    CREATE TABLE IF NOT EXISTS requests (
+      id SERIAL PRIMARY KEY,
+      volunteer_id INTEGER NOT NULL,
+      seedling_id INTEGER NOT NULL,
+      count INTEGER NOT NULL,
+      location TEXT,
+      status TEXT DEFAULT 'pending_nursery',
+      rejection_reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS proofs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    request_id INTEGER NOT NULL,
-    before_image_url TEXT NOT NULL,
-    after_image_url TEXT NOT NULL,
-    notes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (request_id) REFERENCES requests(id)
-  );
+    CREATE TABLE IF NOT EXISTS proofs (
+      id SERIAL PRIMARY KEY,
+      request_id INTEGER NOT NULL,
+      before_image_url TEXT NOT NULL,
+      after_image_url TEXT NOT NULL,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS volunteer_hours (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    volunteer_id INTEGER NOT NULL,
-    request_id INTEGER NOT NULL,
-    hours REAL DEFAULT 2.0,
-    granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (volunteer_id) REFERENCES users(id),
-    FOREIGN KEY (request_id) REFERENCES requests(id)
-  );
+    CREATE TABLE IF NOT EXISTS volunteer_hours (
+      id SERIAL PRIMARY KEY,
+      volunteer_id INTEGER NOT NULL,
+      request_id INTEGER NOT NULL,
+      hours REAL DEFAULT 2.0,
+      granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  -- Create default admin if not exists
-  INSERT OR IGNORE INTO users (name, email, password, role, status) 
-  VALUES ('مدير النظام', 'admin@shatla.sa', 'admin123', 'admin', 'active');
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `;
 
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
+  // Convert SERIAL to INTEGER PRIMARY KEY AUTOINCREMENT for SQLite
+  const finalSchema = isPostgres ? schema : schema.replace(/SERIAL PRIMARY KEY/g, "INTEGER PRIMARY KEY AUTOINCREMENT").replace(/TIMESTAMP/g, "DATETIME");
+  
+  await db.exec(finalSchema);
 
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('hero_image', 'https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?auto=format&fit=crop&q=80&w=2000');
-  INSERT OR IGNORE INTO settings (key, value) VALUES ('stats_image', 'https://images.unsplash.com/photo-1550355291-bbee04a92027?auto=format&fit=crop&q=80&w=1000');
-`);
+  // Seed default data
+  try {
+    if (isPostgres) {
+      await db.prepare("INSERT INTO users (name, email, password, role, status) VALUES ('مدير النظام', 'admin@shatla.sa', 'admin123', 'admin', 'active') ON CONFLICT (email) DO NOTHING").run();
+      await db.prepare("INSERT INTO settings (key, value) VALUES ('hero_image', 'https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?auto=format&fit=crop&q=80&w=2000') ON CONFLICT (key) DO NOTHING").run();
+      await db.prepare("INSERT INTO settings (key, value) VALUES ('stats_image', 'https://images.unsplash.com/photo-1550355291-bbee04a92027?auto=format&fit=crop&q=80&w=1000') ON CONFLICT (key) DO NOTHING").run();
+    } else {
+      db.prepare("INSERT OR IGNORE INTO users (name, email, password, role, status) VALUES (?, ?, ?, ?, ?)").run('مدير النظام', 'admin@shatla.sa', 'admin123', 'admin', 'active');
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('hero_image', 'https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?auto=format&fit=crop&q=80&w=2000');
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run('stats_image', 'https://images.unsplash.com/photo-1550355291-bbee04a92027?auto=format&fit=crop&q=80&w=1000');
+    }
+  } catch (e) {
+    console.log("Seeding skipped or already done");
+  }
+};
 
 async function startServer() {
+  await initSchema();
   const app = express();
   const PORT = 3000;
 
@@ -97,9 +151,8 @@ async function startServer() {
 
   // --- API Routes ---
 
-  // Site Settings
-  app.get("/api/settings", (req, res) => {
-    const settings = db.prepare("SELECT key, value FROM settings").all();
+  app.get("/api/settings", async (req, res) => {
+    const settings = await db.prepare("SELECT key, value FROM settings").all();
     const settingsMap = (settings as {key: string, value: string}[]).reduce((acc, curr) => {
       acc[curr.key] = curr.value;
       return acc;
@@ -107,32 +160,32 @@ async function startServer() {
     res.json(settingsMap);
   });
 
-  app.patch("/api/settings", (req, res) => {
+  app.patch("/api/settings", async (req, res) => {
     const { key, value } = req.body;
     try {
-      db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(value, key);
+      await db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(value, key);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  // Auth
-  app.post("/api/auth/register", (req, res) => {
+  app.post("/api/auth/register", async (req, res) => {
     const { name, email, password, role, phone, location } = req.body;
     try {
-      const stmt = db.prepare("INSERT INTO users (name, email, password, role, phone, location) VALUES (?, ?, ?, ?, ?, ?)");
-      const info = stmt.run(name, email, password, role, phone, location);
-      const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
+      const stmt = db.prepare("INSERT INTO users (name, email, password, role, phone, location) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
+      const info = await stmt.run(name, email, password, role, phone, location);
+      const id = isPostgres ? info.lastInsertRowid : info.lastInsertRowid;
+      const user = await db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(id);
       res.json(user);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const user = db.prepare("SELECT id, name, email, role FROM users WHERE email = ? AND password = ?").get(email, password);
+    const user = await db.prepare("SELECT id, name, email, role FROM users WHERE email = ? AND password = ?").get(email, password);
     if (user) {
       res.json(user);
     } else {
@@ -140,9 +193,8 @@ async function startServer() {
     }
   });
 
-  // Seedlings
-  app.get("/api/seedlings", (req, res) => {
-    const seedlings = db.prepare(`
+  app.get("/api/seedlings", async (req, res) => {
+    const seedlings = await db.prepare(`
       SELECT s.*, u.name as nursery_name 
       FROM seedlings s 
       JOIN users u ON s.nursery_id = u.id 
@@ -151,23 +203,29 @@ async function startServer() {
     res.json(seedlings);
   });
 
-  app.post("/api/seedlings", (req, res) => {
+  app.get("/api/seedlings/nursery/:id", async (req, res) => {
+    const seedlings = await db.prepare(`
+      SELECT * FROM seedlings WHERE nursery_id = ?
+    `).all(req.params.id);
+    res.json(seedlings);
+  });
+
+  app.post("/api/seedlings", async (req, res) => {
     const { nursery_id, type, count, description, requirements, image_url } = req.body;
-    const stmt = db.prepare("INSERT INTO seedlings (nursery_id, type, count, description, requirements, image_url) VALUES (?, ?, ?, ?, ?, ?)");
-    const info = stmt.run(nursery_id, type, count, description, requirements, image_url);
+    const stmt = db.prepare("INSERT INTO seedlings (nursery_id, type, count, description, requirements, image_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
+    const info = await stmt.run(nursery_id, type, count, description, requirements, image_url);
     res.json({ id: info.lastInsertRowid });
   });
 
-  // Requests
-  app.post("/api/requests", (req, res) => {
+  app.post("/api/requests", async (req, res) => {
     const { volunteer_id, seedling_id, count, location } = req.body;
-    const stmt = db.prepare("INSERT INTO requests (volunteer_id, seedling_id, count, location) VALUES (?, ?, ?, ?)");
-    const info = stmt.run(volunteer_id, seedling_id, count, location);
+    const stmt = db.prepare("INSERT INTO requests (volunteer_id, seedling_id, count, location) VALUES (?, ?, ?, ?) RETURNING id");
+    const info = await stmt.run(volunteer_id, seedling_id, count, location);
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.get("/api/requests/nursery/:id", (req, res) => {
-    const requests = db.prepare(`
+  app.get("/api/requests/nursery/:id", async (req, res) => {
+    const requests = await db.prepare(`
       SELECT r.*, u.name as volunteer_name, s.type as seedling_type 
       FROM requests r 
       JOIN users u ON r.volunteer_id = u.id 
@@ -177,8 +235,8 @@ async function startServer() {
     res.json(requests);
   });
 
-  app.get("/api/requests/volunteer/:id", (req, res) => {
-    const requests = db.prepare(`
+  app.get("/api/requests/volunteer/:id", async (req, res) => {
+    const requests = await db.prepare(`
       SELECT r.*, s.type as seedling_type, u.name as nursery_name 
       FROM requests r 
       JOIN seedlings s ON r.seedling_id = s.id 
@@ -188,37 +246,34 @@ async function startServer() {
     res.json(requests);
   });
 
-  app.patch("/api/requests/:id/status", (req, res) => {
+  app.patch("/api/requests/:id/status", async (req, res) => {
     const { status, rejection_reason } = req.body;
     const stmt = db.prepare("UPDATE requests SET status = ?, rejection_reason = ? WHERE id = ?");
-    stmt.run(status, rejection_reason || null, req.params.id);
+    await stmt.run(status, rejection_reason || null, req.params.id);
 
-    // If approved by nursery, decrement seedling count
     if (status === 'approved_nursery') {
-      const request = db.prepare("SELECT seedling_id, count FROM requests WHERE id = ?").get(req.params.id) as any;
-      db.prepare("UPDATE seedlings SET count = count - ? WHERE id = ?").run(request.count, request.seedling_id);
+      const request = await db.prepare("SELECT seedling_id, count FROM requests WHERE id = ?").get(req.params.id) as any;
+      await db.prepare("UPDATE seedlings SET count = count - ? WHERE id = ?").run(request.count, request.seedling_id);
     }
 
     res.json({ success: true });
   });
 
-  // Proofs
-  app.post("/api/proofs", (req, res) => {
+  app.post("/api/proofs", async (req, res) => {
     const { request_id, before_image_url, after_image_url, notes } = req.body;
-    db.transaction(() => {
-      db.prepare("INSERT INTO proofs (request_id, before_image_url, after_image_url, notes) VALUES (?, ?, ?, ?)").run(request_id, before_image_url, after_image_url, notes);
-      db.prepare("UPDATE requests SET status = 'proof_uploaded' WHERE id = ?").run(request_id);
-    })();
+    await db.transaction(async () => {
+      await db.prepare("INSERT INTO proofs (request_id, before_image_url, after_image_url, notes) VALUES (?, ?, ?, ?)").run(request_id, before_image_url, after_image_url, notes);
+      await db.prepare("UPDATE requests SET status = 'proof_uploaded' WHERE id = ?").run(request_id);
+    });
     res.json({ success: true });
   });
 
-  // Admin - User Management
-  app.get("/api/admin/users", (req, res) => {
-    const users = db.prepare("SELECT id, name, email, role, phone, location, status, created_at FROM users").all();
+  app.get("/api/admin/users", async (req, res) => {
+    const users = await db.prepare("SELECT id, name, email, role, phone, location, status, created_at FROM users").all();
     res.json(users);
   });
 
-  app.patch("/api/admin/users/:id", (req, res) => {
+  app.patch("/api/admin/users/:id", async (req, res) => {
     const { name, email, role, phone, location, status } = req.body;
     try {
       const stmt = db.prepare(`
@@ -226,25 +281,24 @@ async function startServer() {
         SET name = ?, email = ?, role = ?, phone = ?, location = ?, status = ? 
         WHERE id = ?
       `);
-      stmt.run(name, email, role, phone, location, status, req.params.id);
+      await stmt.run(name, email, role, phone, location, status, req.params.id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  app.delete("/api/admin/users/:id", (req, res) => {
+  app.delete("/api/admin/users/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+      await db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  // Admin - Pending Proofs
-  app.get("/api/admin/pending-proofs", (req, res) => {
-    const proofs = db.prepare(`
+  app.get("/api/admin/pending-proofs", async (req, res) => {
+    const proofs = await db.prepare(`
       SELECT p.*, r.volunteer_id, r.count, s.type as seedling_type, u.name as volunteer_name 
       FROM proofs p 
       JOIN requests r ON p.request_id = r.id 
@@ -255,36 +309,35 @@ async function startServer() {
     res.json(proofs);
   });
 
-  app.post("/api/admin/approve-proof", (req, res) => {
+  app.post("/api/admin/approve-proof", async (req, res) => {
     const { request_id, volunteer_id } = req.body;
-    db.transaction(() => {
-      db.prepare("UPDATE requests SET status = 'approved_admin' WHERE id = ?").run(request_id);
-      db.prepare("INSERT INTO volunteer_hours (volunteer_id, request_id) VALUES (?, ?)").run(volunteer_id, request_id);
-    })();
+    await db.transaction(async () => {
+      await db.prepare("UPDATE requests SET status = 'approved_admin' WHERE id = ?").run(request_id);
+      await db.prepare("INSERT INTO volunteer_hours (volunteer_id, request_id) VALUES (?, ?)").run(volunteer_id, request_id);
+    });
     res.json({ success: true });
   });
 
-  // Stats
-  app.get("/api/stats", (req, res) => {
-    const totalSeedlings = db.prepare("SELECT SUM(count) as total FROM seedlings").get() as any;
-    const plantedSeedlings = db.prepare("SELECT SUM(count) as total FROM requests WHERE status = 'approved_admin'").get() as any;
-    const totalVolunteers = db.prepare("SELECT COUNT(*) as total FROM users WHERE role = 'volunteer'").get() as any;
-    const totalHours = db.prepare("SELECT SUM(hours) as total FROM volunteer_hours").get() as any;
+  app.get("/api/stats", async (req, res) => {
+    const totalSeedlings = await db.prepare("SELECT SUM(count) as total FROM seedlings").get() as any;
+    const plantedSeedlings = await db.prepare("SELECT SUM(count) as total FROM requests WHERE status = 'approved_admin'").get() as any;
+    const totalVolunteers = await db.prepare("SELECT COUNT(*) as total FROM users WHERE role = 'volunteer'").get() as any;
+    const totalHours = await db.prepare("SELECT SUM(hours) as total FROM volunteer_hours").get() as any;
     
-    const topVolunteers = db.prepare(`
+    const topVolunteers = await db.prepare(`
       SELECT u.name, SUM(vh.hours) as hours 
       FROM users u 
       JOIN volunteer_hours vh ON u.id = vh.volunteer_id 
-      GROUP BY u.id 
+      GROUP BY u.id, u.name
       ORDER BY hours DESC 
       LIMIT 5
     `).all();
 
     res.json({
-      totalSeedlings: totalSeedlings.total || 0,
-      plantedSeedlings: plantedSeedlings.total || 0,
-      totalVolunteers: totalVolunteers.total || 0,
-      totalHours: totalHours.total || 0,
+      totalSeedlings: totalSeedlings?.total || 0,
+      plantedSeedlings: plantedSeedlings?.total || 0,
+      totalVolunteers: totalVolunteers?.total || 0,
+      totalHours: totalHours?.total || 0,
       topVolunteers
     });
   });
