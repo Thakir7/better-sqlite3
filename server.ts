@@ -26,7 +26,7 @@ if (isPostgres) {
       get: async (...params: any[]) => (await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params)).rows[0],
       run: async (...params: any[]) => {
         const res = await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
-        return { lastInsertRowid: (res as any).rows[0]?.id };
+        return { lastInsertRowid: res.rows[0]?.id || (res as any).oid };
       }
     }),
     exec: async (sql: string) => {
@@ -175,7 +175,7 @@ async function startServer() {
     try {
       const stmt = db.prepare("INSERT INTO users (name, email, password, role, phone, location) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
       const info = await stmt.run(name, email, password, role, phone, location);
-      const id = isPostgres ? info.lastInsertRowid : info.lastInsertRowid;
+      const id = info.lastInsertRowid;
       const user = await db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(id);
       res.json(user);
     } catch (e: any) {
@@ -206,21 +206,21 @@ async function startServer() {
   app.get("/api/seedlings/nursery/:id", async (req, res) => {
     const seedlings = await db.prepare(`
       SELECT * FROM seedlings WHERE nursery_id = ?
-    `).all(req.params.id);
+    `).all(parseInt(req.params.id));
     res.json(seedlings);
   });
 
   app.post("/api/seedlings", async (req, res) => {
     const { nursery_id, type, count, description, requirements, image_url } = req.body;
     const stmt = db.prepare("INSERT INTO seedlings (nursery_id, type, count, description, requirements, image_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
-    const info = await stmt.run(nursery_id, type, count, description, requirements, image_url);
+    const info = await stmt.run(parseInt(nursery_id), type, parseInt(count), description, requirements, image_url);
     res.json({ id: info.lastInsertRowid });
   });
 
   app.post("/api/requests", async (req, res) => {
     const { volunteer_id, seedling_id, count, location } = req.body;
     const stmt = db.prepare("INSERT INTO requests (volunteer_id, seedling_id, count, location) VALUES (?, ?, ?, ?) RETURNING id");
-    const info = await stmt.run(volunteer_id, seedling_id, count, location);
+    const info = await stmt.run(parseInt(volunteer_id), parseInt(seedling_id), parseInt(count), location);
     res.json({ id: info.lastInsertRowid });
   });
 
@@ -231,7 +231,7 @@ async function startServer() {
       JOIN users u ON r.volunteer_id = u.id 
       JOIN seedlings s ON r.seedling_id = s.id 
       WHERE s.nursery_id = ?
-    `).all(req.params.id);
+    `).all(parseInt(req.params.id));
     res.json(requests);
   });
 
@@ -242,18 +242,18 @@ async function startServer() {
       JOIN seedlings s ON r.seedling_id = s.id 
       JOIN users u ON s.nursery_id = u.id 
       WHERE r.volunteer_id = ?
-    `).all(req.params.id);
+    `).all(parseInt(req.params.id));
     res.json(requests);
   });
 
   app.patch("/api/requests/:id/status", async (req, res) => {
     const { status, rejection_reason } = req.body;
     const stmt = db.prepare("UPDATE requests SET status = ?, rejection_reason = ? WHERE id = ?");
-    await stmt.run(status, rejection_reason || null, req.params.id);
+    await stmt.run(status, rejection_reason || null, parseInt(req.params.id));
 
     if (status === 'approved_nursery') {
-      const request = await db.prepare("SELECT seedling_id, count FROM requests WHERE id = ?").get(req.params.id) as any;
-      await db.prepare("UPDATE seedlings SET count = count - ? WHERE id = ?").run(request.count, request.seedling_id);
+      const request = await db.prepare("SELECT seedling_id, count FROM requests WHERE id = ?").get(parseInt(req.params.id)) as any;
+      await db.prepare("UPDATE seedlings SET count = count - ? WHERE id = ?").run(parseInt(request.count), parseInt(request.seedling_id));
     }
 
     res.json({ success: true });
@@ -281,7 +281,7 @@ async function startServer() {
         SET name = ?, email = ?, role = ?, phone = ?, location = ?, status = ? 
         WHERE id = ?
       `);
-      await stmt.run(name, email, role, phone, location, status, req.params.id);
+      await stmt.run(name, email, role, phone, location, status, parseInt(req.params.id));
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -290,7 +290,7 @@ async function startServer() {
 
   app.delete("/api/admin/users/:id", async (req, res) => {
     try {
-      await db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+      await db.prepare("DELETE FROM users WHERE id = ?").run(parseInt(req.params.id));
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -312,8 +312,8 @@ async function startServer() {
   app.post("/api/admin/approve-proof", async (req, res) => {
     const { request_id, volunteer_id } = req.body;
     await db.transaction(async () => {
-      await db.prepare("UPDATE requests SET status = 'approved_admin' WHERE id = ?").run(request_id);
-      await db.prepare("INSERT INTO volunteer_hours (volunteer_id, request_id) VALUES (?, ?)").run(volunteer_id, request_id);
+      await db.prepare("UPDATE requests SET status = 'approved_admin' WHERE id = ?").run(parseInt(request_id));
+      await db.prepare("INSERT INTO volunteer_hours (volunteer_id, request_id) VALUES (?, ?)").run(parseInt(volunteer_id), parseInt(request_id));
     });
     res.json({ success: true });
   });
