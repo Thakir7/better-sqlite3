@@ -66,18 +66,31 @@ export default function NurseryDashboard({ user }: NurseryDashboardProps) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-2xl card-shadow border-r-4 border-primary">
-          <p className="text-stone-500 text-sm">طلبات بانتظار الموافقة</p>
-          <p className="text-3xl font-bold">{requests.filter(r => r.status === 'pending_nursery').length}</p>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-2xl card-shadow border-r-4 border-stone-400">
+          <p className="text-stone-500 text-sm">إجمالي الشتلات المعلنة</p>
+          <p className="text-3xl font-bold">
+            {seedlings.reduce((acc, s) => acc + s.count, 0) + 
+             requests.filter(r => !r.status.includes('rejected')).reduce((acc, r) => acc + r.count, 0)}
+          </p>
+        </div>
+        <div className="bg-white p-6 rounded-2xl card-shadow border-r-4 border-amber-500">
+          <p className="text-stone-500 text-sm">شتلات بانتظار الموافقة</p>
+          <p className="text-3xl font-bold">
+            {requests.filter(r => r.status === 'pending_nursery').reduce((acc, r) => acc + r.count, 0)}
+          </p>
         </div>
         <div className="bg-white p-6 rounded-2xl card-shadow border-r-4 border-blue-500">
           <p className="text-stone-500 text-sm">شتلات قيد التوزيع</p>
-          <p className="text-3xl font-bold">{requests.filter(r => r.status === 'approved_nursery' || r.status === 'picked_up').length}</p>
+          <p className="text-3xl font-bold">
+            {requests.filter(r => ['approved_nursery', 'picked_up', 'proof_uploaded'].includes(r.status)).reduce((acc, r) => acc + r.count, 0)}
+          </p>
         </div>
         <div className="bg-white p-6 rounded-2xl card-shadow border-r-4 border-green-500">
           <p className="text-stone-500 text-sm">إجمالي الشتلات الموزعة</p>
-          <p className="text-3xl font-bold">{requests.filter(r => r.status === 'approved_admin').length}</p>
+          <p className="text-3xl font-bold">
+            {requests.filter(r => r.status === 'approved_admin').reduce((acc, r) => acc + r.count, 0)}
+          </p>
         </div>
       </div>
 
@@ -160,26 +173,40 @@ export default function NurseryDashboard({ user }: NurseryDashboardProps) {
             <thead className="bg-stone-50 text-stone-500 text-sm">
               <tr>
                 <th className="p-4">النوع</th>
-                <th className="p-4">العدد المتاح</th>
-                <th className="p-4">الوصف</th>
+                <th className="p-4">الكمية الكلية</th>
+                <th className="p-4">المطلوب حالياً</th>
+                <th className="p-4">المتبقي</th>
                 <th className="p-4">الحالة</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
-              {seedlings.map(seed => (
-                <tr key={seed.id} className="hover:bg-stone-50 transition-colors">
-                  <td className="p-4 font-semibold">{seed.type}</td>
-                  <td className="p-4">{seed.count}</td>
-                  <td className="p-4 text-sm text-stone-500 max-w-xs truncate">{seed.description}</td>
-                  <td className="p-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      seed.count > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                    }`}>
-                      {seed.count > 0 ? 'متاح' : 'نفذت الكمية'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {seedlings.map(seed => {
+                const approved = requests
+                  .filter(r => r.seedling_id === seed.id && (r.status.includes('approved') || r.status === 'picked_up' || r.status === 'proof_uploaded'))
+                  .reduce((acc, r) => acc + r.count, 0);
+                const pending = requests
+                  .filter(r => r.seedling_id === seed.id && r.status === 'pending_nursery')
+                  .reduce((acc, r) => acc + r.count, 0);
+                
+                const total = seed.count + approved;
+                const remaining = seed.count - pending;
+                
+                return (
+                  <tr key={seed.id} className="hover:bg-stone-50 transition-colors">
+                    <td className="p-4 font-semibold">{seed.type}</td>
+                    <td className="p-4">{total}</td>
+                    <td className="p-4 text-amber-600 font-bold">{pending}</td>
+                    <td className="p-4 text-blue-600 font-bold">{remaining}</td>
+                    <td className="p-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        remaining > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {remaining > 0 ? 'متاح' : 'نفذت الكمية'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
               {seedlings.length === 0 && (
                 <tr>
                   <td colSpan={4} className="p-12 text-center text-stone-400">لم تقم بإضافة أي شتلات بعد</td>
