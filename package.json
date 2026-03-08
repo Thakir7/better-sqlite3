@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node server.ts"
+    "start": "tsx server.ts"
   },
   "dependencies": {
     "@google/genai": "^0.21.0",
