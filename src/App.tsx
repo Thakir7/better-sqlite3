@@ -19,9 +19,16 @@ export default function App() {
   useEffect(() => {
     const savedUser = localStorage.getItem('shatla_user');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      const parsedUser = JSON.parse(savedUser);
+      console.log('User loaded from storage:', parsedUser);
+      setUser(parsedUser);
     }
   }, []);
+
+  useEffect(() => {
+    console.log('Current View:', view);
+    console.log('Current User:', user);
+  }, [view, user]);
 
   const handleLogin = (userData: User) => {
     setUser(userData);
@@ -191,7 +198,7 @@ export default function App() {
           <div className="space-y-4">
             <h5 className="font-bold">تواصل معنا</h5>
             <p className="text-stone-400 text-sm">البريد: info@shatla.sa</p>
-            <p className="text-stone-400 text-sm">جوال: 0599953775</p>
+            <p className="text-stone-400 text-sm">الهاتف: 920000000</p>
           </div>
         </div>
         <div className="max-w-7xl mx-auto border-t border-white/10 mt-12 pt-8 text-center text-stone-500 text-xs">
