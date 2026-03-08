@@ -149,6 +149,12 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // Force cache headers to ensure latest version is served
+  app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    next();
+  });
+
   // --- API Routes ---
 
   app.get("/api/settings", async (req, res) => {
@@ -212,9 +218,16 @@ async function startServer() {
 
   app.post("/api/seedlings", async (req, res) => {
     const { nursery_id, type, count, description, requirements, image_url } = req.body;
-    const stmt = db.prepare("INSERT INTO seedlings (nursery_id, type, count, description, requirements, image_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
-    const info = await stmt.run(parseInt(nursery_id), type, parseInt(count), description, requirements, image_url);
-    res.json({ id: info.lastInsertRowid });
+    console.log(`[API] Adding seedling: ${type} (${count}) for nursery ${nursery_id}`);
+    try {
+      const stmt = db.prepare("INSERT INTO seedlings (nursery_id, type, count, description, requirements, image_url) VALUES (?, ?, ?, ?, ?, ?) RETURNING id");
+      const info = await stmt.run(parseInt(nursery_id), type, parseInt(count), description, requirements, image_url);
+      console.log(`[API] Success! New seedling ID: ${info.lastInsertRowid}`);
+      res.json({ id: info.lastInsertRowid });
+    } catch (e: any) {
+      console.error('[API] Error adding seedling:', e.message);
+      res.status(400).json({ error: e.message });
+    }
   });
 
   app.post("/api/requests", async (req, res) => {
