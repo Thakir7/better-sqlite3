@@ -82,6 +82,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f5f5f0] text-stone-900">
+      <div className="bg-amber-100 text-amber-800 text-[10px] py-1 text-center font-bold">
+        تحديث النظام: تم تفعيل الإصدار 1.3 بنجاح
+      </div>
       <Navbar user={user} onLogout={handleLogout} onNavigate={setView} />
       
       <main className="max-w-7xl mx-auto px-6 py-12">
